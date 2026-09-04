@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Pawfect Pricing · One Piece tests</title>
+  <style>
+    body { font-family: ui-monospace, Menlo, Consolas, monospace; background:#09090b; color:#fafafa; padding:24px; line-height:1.5; }
+    h1 { font-size:18px; margin-bottom:4px; }
+    h2 { font-size:13px; margin:20px 0 6px; color:#a1a1aa; text-transform:uppercase; letter-spacing:.08em; }
+    .sum { font-size:15px; font-weight:700; padding:10px 14px; border-radius:8px; margin:12px 0 4px; }
+    .sum.pass { background:rgba(74,222,128,.12); color:#4ade80; }
+    .sum.fail { background:rgba(248,113,113,.12); color:#f87171; }
+    .t { font-size:12px; padding:2px 0; }
+    .t.pass::before { content:"PASS  "; color:#4ade80; }
+    .t.fail::before { content:"FAIL  "; color:#f87171; }
+    .t.fail { color:#fca5a5; }
+    .why { color:#71717a; padding-left:52px; font-size:11px; }
+  </style>
+</head>
+<body>
+  <h1>One Piece search tests</h1>
+  <p class="why" style="padding-left:0">Open this file in a browser. Every assertion below guards a way the One Piece
+     search could quote the wrong card — the wrong printing, the wrong set, or a query so narrow eBay
+     returns nothing. Run it after touching onepiece.js or refreshing cards_op.js.</p>
+  <div id="out"></div>
+
+<!-- Cache-busted on purpose: a test page must never assert against a stale copy
+     of the file it is testing. -->
+<script>document.write('<script src="onepiece.js?t=' + Date.now() + '"><\/script>');</script>
+<script src="cards_op.js"></script>
+<script>
+  const out = document.getElementById("out");
+  let passed = 0, failed = 0;
+  const summary = document.createElement("div");
+  out.appendChild(summary);
+
+  function group(name) {
+    const h = document.createElement("h2");
+    h.textContent = name;
+    out.appendChild(h);
+  }
+  function ok(cond, label, why) {
+    const d = document.createElement("div");
+    d.className = "t " + (cond ? "pass" : "fail");
+    d.textContent = label;
+    out.appendChild(d);
+    if (!cond && why) {
+      const w = document.createElement("div");
+      w.className = "why";
+      w.textContent = why;
+      out.appendChild(w);
+    }
+    cond ? passed++ : failed++;
+  }
+  function eq(actual, expected, label) {
+    ok(actual === expected, label, `expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+  }
+
+  const OP = window.OnePiece;
+  // The same canonicaliser index.html injects, so padding equivalence is tested
+  // as it actually behaves in the app rather than under the module's fallback.
+  OP.setCanon(s => String(s == null ? "" : s).toLowerCase().replace(/(^|[^0-9])0+(\d)/g, "$1$2"));
+
+  const q = s => OP.buildQuery(s);
+
+  // ── The card ID is the search ──────────────────────────────
+  group("The ID is the search, the name is not");
+  eq(q("OP01-016"), "OP01-016", `a bare ID passes straight through`);
+  eq(q("Nami OP01-016"), "OP01-016", `the character name in front of the ID is dropped`);
+  eq(q("Monkey.D.Luffy OP01-003"), "OP01-003", `punctuated names are dropped too`);
+  eq(q("OP01-016 stamped"), "OP01-016 stamped", `a word typed AFTER the ID is kept — only names in front go`);
+  eq(q("luffy"), "luffy", `no ID means no rewriting: free text is the user's own wording`);
+
+  group("Typing an ID loosely still finds the card");
+  eq(q("op1-16"), "OP01-016", `unpadded "op1-16"`);
+  eq(q("op01 016"), "OP01-016", `space instead of a dash`);
+  eq(q("op01016"), "OP01-016", `no separator at all`);
+  eq(q("st21-001"), "ST21-001", `starter deck IDs`);
+  eq(q("prb01-001"), "PRB01-001", `4-letter set families`);
+
+  group("Set code vs card number — the OP17 trap");
+  eq(OP.parseQuery("op17").setCode, "OP17", `"op17" is a SET, not card OP01-007`);
+  eq(OP.parseQuery("op17").code, "", `...so no card ID is claimed`);
+  eq(OP.parseQuery("p-001").code, "P-001", `"P-001" IS a card — promos have no set number`);
+  eq(OP.parseQuery("p001").code, "P-001", `...separator optional there too`);
+  ok(q("p-001").indexOf("one piece") === 0,
+     `a promo ID gets "one piece" bolted on — "P 001" alone matches half of eBay`,
+     `got ${q("p-001")}`);
+  ok(q("op01-016").indexOf("one piece") === -1,
+     `a normal ID does NOT — it is already unique and every word costs listings`,
+     `got ${q("op01-016")}`);
+
+  // ── Printings ──────────────────────────────────────────────
+  group("Printing shorthand");
+  eq(q("op01-016 aa"), "OP01-016 alt art", `aa -> alt art`);
+  eq(q("op01-016 alt"), "OP01-016 alt art", `alt is the same tag`);
+  eq(q("op01-016 manga"), "OP01-016 manga", `manga stays one token — nothing to guess wrong`);
+  eq(q("op09-001 sp"), "OP09-001 sp", `sp`);
+  eq(q("op11-118 fa"), "OP11-118 full art", `fa -> full art`);
+  eq(q("op01-016 alt art"), "OP01-016 alt art", `a spelled-out tag doesn't duplicate the expansion`);
+  eq(OP.badge("op01-016 aa"), "Alt Art", `the badge names the printing`);
+  eq(OP.badge("op01-016"), "Base Print", `no tag means the plain print`);
+  eq(OP.badge("luffy"), "", `no ID, no printing claim`);
+  ok(q("op01-016 base").indexOf("-manga") !== -1,
+     `"base" excludes the parallels rather than adding a keyword`,
+     `got ${q("op01-016 base")}`);
+
+  group("Graders, conditions and language survive the rewrite");
+  eq(q("PSA 10 Nami OP01-016 aa"), "OP01-016 alt art psa 10", `grader and grade kept, name dropped`);
+  eq(q("op01-016 nm"), "OP01-016 nm", `condition shorthand is left for index.html to expand`);
+  eq(q("op01-016 jp"), "OP01-016 japanese", `jp asks for the Japanese print`);
+  eq(q("op01-016 en"), "OP01-016 -japanese", `en excludes it instead of demanding the word "english"`);
+
+  group("Sealed products search the set NAME, not the code");
+  ok(/booster box/i.test(q("op17 bbx")) === false, `bbx is expanded by index.html, not here`, `got ${q("op17 bbx")}`);
+  ok(/one piece/i.test(q("op17 bbx")), `the game name leads a sealed search`, `got ${q("op17 bbx")}`);
+  ok(q("op17 bbx").toLowerCase().indexOf("op17") === -1,
+     `nobody lists "OP17 booster box" — the set's name is what box titles use`,
+     `got ${q("op17 bbx")}`);
+  ok(OP.parseQuery("op17 bbx").sealed, `bbx marks the query sealed`);
+  ok(OP.parseQuery("st21 sd").sealed, `sd (starter deck) does too`);
+
+  // ── Catalogue ──────────────────────────────────────────────
+  group("Catalogue (cards_op.js)");
+  ok(OP.ready(), `cards_op.js loaded`, `CARDS_OP is empty — run scripts/fetch_op_cards.py`);
+  if (OP.ready()) {
+    eq(OP.setNameFor("OP01"), "Romance Dawn", `set codes resolve to set names`);
+    eq(OP.setNameFor("ST01"), "Straw Hat Crew", `...for starter decks too`);
+
+    const nami = OP.search("nami op01-016", 60) || [];
+    ok(nami.length > 0, `"nami op01-016" finds the card`, `found nothing`);
+    ok(nami.every(r => r.num === "OP01-016"), `every row is that exact ID`,
+       `got ${nami.map(r => r.num).join(", ")}`);
+    ok(nami.some(r => r.treat === "AA"), `the alternate art is one of the rows`);
+    ok(nami.some(r => !r.treat), `so is the plain print`);
+    ok(nami.some(r => r.orig && r.set === "Romance Dawn"),
+       `the original OP01 printing is flagged as such`);
+
+    const aa = OP.search("nami op01-016 aa", 60) || [];
+    ok(aa.length > 0 && aa.every(r => r.treat === "AA"),
+       `typing "aa" filters the list to alternate arts`,
+       `got ${aa.map(r => r.treat).join(", ")}`);
+
+    const base = OP.search("nami op01-016 base", 60) || [];
+    ok(base.length > 0 && base.every(r => !r.treat),
+       `"base" filters to plain prints`,
+       `got ${base.map(r => r.treat).join(", ")}`);
+
+    const filled = (aa[0] || {}).fill || "";
+    eq(OP.buildQuery(filled), "OP01-016 alt art",
+       `picking a dropdown row round-trips to the right eBay query`);
+
+    // "op01-01" is genuinely two questions — the cards numbered 01x, and the
+    // unpadded reading of card 001 — and the search answers both rather than
+    // betting on one. What it must never do is stray outside the set.
+    const partial = OP.search("op01-01", 60) || [];
+    ok(partial.length > 0 && partial.every(r => r.num.indexOf("OP01-0") === 0),
+       `a half-typed ID stays inside its set`, `got ${partial.map(r => r.num).join(", ")}`);
+    ok(partial.some(r => r.num === "OP01-016"), `...and reaches the card being typed`);
+
+    const loose = OP.search("op1-16", 60) || [];
+    ok(loose.some(r => r.num === "OP01-016"), `an unpadded ID still finds the card`);
+
+    ok((OP.search("luffy", 60) || []).length > 0, `a bare character name searches`);
+  }
+
+  summary.className = "sum " + (failed ? "fail" : "pass");
+  summary.textContent = failed ? `${failed} FAILED · ${passed} passed` : `All ${passed} tests passed`;
+</script>
+</body>
+</html>

@@ -204,6 +204,38 @@
     /* ── Search input ── */
     .search-section { display: flex; flex-direction: column; gap: 8px; }
 
+    /* Game switch. Two games, one search box — and the shorthand means
+       different things in each ("sp" is a One Piece printing, "hp" is a
+       Pokemon condition), so which game is active has to be visible at a
+       glance rather than inferred from what you typed. */
+    .game-switch {
+      display: flex;
+      gap: 4px;
+      padding: 3px;
+      background: var(--surface2);
+      border: 1px solid var(--border2);
+      border-radius: var(--r);
+    }
+    .game-switch button {
+      flex: 1;
+      background: none;
+      border: none;
+      color: var(--text3);
+      font-family: inherit;
+      font-size: 12.5px;
+      font-weight: 600;
+      letter-spacing: .02em;
+      padding: 7px 10px;
+      border-radius: var(--r-sm);
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+    }
+    .game-switch button:hover { color: var(--text2); }
+    .game-switch button.active {
+      background: var(--purple);
+      color: #fff;
+    }
+
     .input-wrap { position: relative; }
     .input-wrap input[type="text"] {
       width: 100%;
@@ -276,6 +308,7 @@
       font-variant-numeric: tabular-nums;
       color: var(--purple); font-weight: 700;
     }
+    .suggestions .sug-treat { color: #38bdf8; font-weight: 700; }
     .suggestions .sug-src {
       display: inline-block; margin-left: 4px; padding: 0 5px;
       border-radius: 4px; font-size: 10px; font-weight: 700;
@@ -390,6 +423,10 @@
     .status-badge.graded { background: rgba(234,88,12,0.15); color: #fb923c; }
     .status-badge.raw    { background: rgba(124,58,237,0.15); color: #a78bfa; }
     .status-badge.sealed { background: rgba(74,222,128,0.15); color: #4ade80; }
+    /* Which PRINTING the One Piece query is asking eBay for. Sits next to the
+       raw/graded badge because on this game they are separate questions: an
+       OP01-016 can be raw and still be the $2 print or the $2,000 one. */
+    .status-badge.print  { background: rgba(56,189,248,0.15); color: #38bdf8; margin-left: 6px; }
 
     /* ── Comp entry ── */
     .comp-entry { display: flex; gap: 8px; align-items: stretch; }
@@ -936,6 +973,10 @@
 
   <!-- Card search -->
   <div class="search-section">
+    <div class="game-switch" id="gameSwitch">
+      <button type="button" data-game="pkmn" onclick="setGame('pkmn')">Pokémon</button>
+      <button type="button" data-game="op" onclick="setGame('op')">One Piece</button>
+    </div>
     <div class="input-wrap">
       <input type="text" id="cardInput"
         placeholder="e.g. Charizard 125/094 · try etb or bbx too"
@@ -975,8 +1016,10 @@
 <script src="money.js?v=1"></script>
 <script src="recents.js?v=7"></script>
 <script src="compsearch.js?v=1"></script>
+<script src="onepiece.js?v=1"></script>
 <script src="cards.js"></script>
 <script src="cards_jp.js"></script>
+<script src="cards_op.js"></script>
 <script>
   const TRAINER_NAMES = ["Ash Ketchum","Leon","Cynthia","Steven Stone","Red","Lance","Diantha","Iris","Alder","Blue / Gary Oak","N","Giovanni","Guzma","Gladion","Cyrus","Silver","Wally","Hop","Marnie","Bede","Nemona","Arven","Penny","Geeta","Rika","Poppy","Larry","Hassel","Lorelei","Bruno","Agatha","Will","Koga","Karen","Sidney","Phoebe","Glacia","Drake","Aaron","Bertha","Flint","Lucian","Shauntal","Marshal","Grimsley","Caitlin","Malva","Wikstrom","Drasna","Siebold","Kahili","Molayne","Olivia","Acerola","Hapu","Brock","Misty","Lt. Surge","Erika","Sabrina","Blaine","Whitney","Bugsy","Morty","Chuck","Jasmine","Pryce","Clair","Roxanne","Brawly","Wattson","Flannery","Norman","Winona","Tate & Liza","Wallace","Juan","Roark","Gardenia","Fantina","Maylene","Crasher Wake","Byron","Candice","Volkner","Cilan","Chili","Cress","Lenora","Burgh","Elesa","Clay","Skyla","Brycen","Drayden","Roxie","Marlon","Cheren","Viola","Grant","Korrina"];
 
@@ -985,6 +1028,51 @@
   // Combined once (not per keystroke) for the offline name autocomplete.
   const ALL_NAMES = [...POKEMON_NAMES, ...TRAINER_NAMES];
 
+  // ── Game switch ───────────────────────────────────────────
+  // Two card games share one search box. They are not two skins on the same
+  // search: a Pokemon card is found by "name + 125/197" and a One Piece card by
+  // its ID alone ("OP01-016"), the shorthand collides ("sp" is a One Piece
+  // printing, "hp" is a Pokemon condition), and the catalogues are separate
+  // files. So the mode is explicit and sticky rather than guessed from the
+  // input — a guess that flips mid-word would be worse than no guess at all.
+  // Everything game-specific hangs off this one variable; see onepiece.js for
+  // the One Piece half.
+  const PLACEHOLDERS = {
+    pkmn: "e.g. Charizard 125/094 · try etb or bbx too",
+    op:   "e.g. OP01-016 aa · or type Nami and pick the print"
+  };
+  let game = localStorage.getItem("game") === "op" ? "op" : "pkmn";
+
+  function applyGame() {
+    document.querySelectorAll("#gameSwitch button").forEach(b =>
+      b.classList.toggle("active", b.dataset.game === game));
+    document.getElementById("cardInput").placeholder = PLACEHOLDERS[game];
+  }
+
+  function setGame(g) {
+    if (g === game) return;
+    game = g;
+    localStorage.setItem("game", g);
+    applyGame();
+    lastSuggestSig = "";   // the dropdown is about to mean something else
+    update();
+    document.getElementById("cardInput").focus();
+  }
+
+  // A comp row, a saved set and a recent search are all just the text that was
+  // typed, and the two games read that text differently — "OP01-016 aa" means
+  // nothing to the Pokemon parser. Rows added from now on record their game;
+  // older rows (and anything synced from a device on an earlier build) are read
+  // off the label instead, which is reliable because a One Piece query is
+  // exactly the thing that carries a full card ID.
+  function gameOf(label, stored) {
+    if (stored === "op" || stored === "pkmn") return stored;
+    return String(label || "").split(/\s+/).some(t => {
+      const p = OnePiece.looksLikeCode(t) && OnePiece.parseQuery(t);
+      return p && p.code;
+    }) ? "op" : "pkmn";
+  }
+
   // ── Auction toggle ────────────────────────────────────────
   let excludeAuctions = localStorage.getItem("excludeAuctions") === "true";
   document.addEventListener("DOMContentLoaded", () => {
@@ -992,6 +1080,8 @@
     // shared with the recents matcher and the saved-comp search.
     Recents.setCanon(canonNum);
     CompSearch.setCanon(canonNum);
+    OnePiece.setCanon(canonNum);
+    applyGame();
     document.getElementById("excludeAuctions").checked = excludeAuctions;
     applyDesktopMode();
     // Restore the last typed card so a refresh doesn't lose it.
@@ -1211,10 +1301,19 @@
     return input.replace(/\b(etb|bbx)\b/gi, m => PRODUCTS[m.toLowerCase()]);
   }
   function isSealedProduct(input) {
+    // One Piece sells boxes and starter decks rather than ETBs; its own parser
+    // owns that vocabulary so there is one list, not two drifting ones.
+    if (game === "op" && OnePiece.parseQuery(input).sealed) return true;
     return /\b(etb|elite trainer box|booster box|bbx|sealed|collection box|tin)\b/i.test(input);
   }
   function buildUrls(input) {
-    const normalized = expandProducts(expandConditions(stripCardSuffix(normalizeCardNumber(input))));
+    // One Piece rewrites the query rather than trimming it: the ID replaces the
+    // name, the printing shorthand becomes seller wording. Everything after
+    // that — condition expansion, the graded aspect, the sort codes — is shared,
+    // because none of it is game-specific.
+    const normalized = game === "op"
+      ? expandProducts(expandConditions(OnePiece.buildQuery(input)))
+      : expandProducts(expandConditions(stripCardSuffix(normalizeCardNumber(input))));
     const encoded    = encodeURIComponent(normalized);
     const gradedFlag = isGraded(input) ? "Yes" : "No";
     const base = isSealedProduct(input)
@@ -1259,12 +1358,20 @@
     } else {
       statusEl.innerHTML = '<span class="status-badge raw">🃏 Raw Card</span>';
     }
+    // Which printing the One Piece search is actually pinned to. Worth its own
+    // badge: the same ID spans a $2 card and a $2,000 one, and the difference
+    // between them is a two-letter tag that is easy to forget to type.
+    if (game === "op") {
+      const print = OnePiece.badge(value);
+      if (print) statusEl.innerHTML += `<span class="status-badge print">🏴 ${escHtml(print)}</span>`;
+    }
     renderSuggestions();
   }
 
   function renderSuggestions() {
     const ci  = document.getElementById("cardInput");
     if (!ci.value.trim()) { closeSuggestions(); return; }
+    if (game === "op") { renderOpSuggestions(ci.value); return; }
 
     // Pull a clean card name + collector number out of whatever was typed
     // (grader/condition/marketing noise stripped, promos and punctuation ok).
@@ -1331,6 +1438,73 @@
   // threshold above, so the two can't drift apart.
   const SUGGESTION_LIMIT = 12;
 
+  // ── One Piece dropdown ────────────────────────────────────
+  // Local only, no network leg. There is no free One Piece card API to fall
+  // back to the way pokemontcg.io backs the Pokemon side, so cards_op.js is the
+  // whole catalogue — re-run scripts/fetch_op_cards.py when a set drops.
+  //
+  // The rows are PRINTS, not cards: typing "nami" lists the plain OP01-016
+  // alongside its alternate art and its manga art, because those are three
+  // different things to price. Picking one writes its shorthand into the box,
+  // which is what pins the eBay search to that printing.
+  function renderOpSuggestions(value) {
+    cardLookupSeq++;                       // nothing in flight can outlive this
+    clearTimeout(cardLookupTimer);
+    if (cardLookupCtrl) cardLookupCtrl.abort();
+
+    const p = OnePiece.parseQuery(value);
+    const cores = nameCores(p.name.join(" "));
+    const recents = recentRows(cores, p.code || p.setCode, "");
+
+    // Nothing to go on yet (a lone letter): recents plus the offline name list,
+    // matching what the Pokemon side does with the same amount of input.
+    if (!cores.length && !p.code && !p.setCode) { paintSuggestions(null, null, recents); return; }
+    if (!p.code && !p.setCode && cores.length === 1 && cores[0].length < 2) {
+      paintSuggestions(null, null, recents); return;
+    }
+
+    const results = OnePiece.search(value, SUGGESTION_LIMIT * 5) || [];
+    paintSuggestions(results.length ? rankOpResults(results, p) : null, null, recents);
+  }
+
+  // Closest print first. An exactly-typed ID beats a name match, an exact name
+  // beats a prefix, and where a card has parallels the plain print leads —
+  // it is the copy you are most likely holding, and its tag-less row is the one
+  // a typed "aa" would have filtered out if you meant the other.
+  function rankOpResults(list, p) {
+    const code = (p.code || "").toUpperCase();
+    const typed = p.name.join(" ");
+    return list
+      .map((r, i) => {
+        let s = 0;
+        if (code && r.num.toUpperCase() === code) s += 100;
+        const n = r.name.toLowerCase();
+        if (typed && n === typed) s += 50;
+        else if (typed && n.startsWith(typed)) s += 25;
+        if (!r.treat) s += 5;
+        if (r.orig) s += 3;    // the packs it came in, not a later reprint
+        return { r, i, s };
+      })
+      .sort((a, b) => b.s - a.s || a.i - b.i)
+      .slice(0, SUGGESTION_LIMIT)
+      .map(x => x.r);
+  }
+
+  // Character names for the offline last-word autocomplete, deduped out of the
+  // print catalogue (5,000 prints, ~1,400 distinct characters) on first use.
+  let opNames = null;
+  function opNameList() {
+    if (opNames) return opNames;
+    const seen = new Set();
+    opNames = [];
+    // Bare name, not window.CARDS_OP: cards_op.js declares it with `const`,
+    // which never lands on the window object (same as CARDS in cards.js).
+    (typeof CARDS_OP !== "undefined" ? CARDS_OP : []).forEach(r => {
+      if (!seen.has(r[6])) { seen.add(r[6]); opNames.push(r[0]); }
+    });
+    return opNames;
+  }
+
   // ── Recent searches ───────────────────────────────────────
   // A search only counts when one is actually run — an eBay button on mobile,
   // or Compare prices in desktop mode. Typing alone doesn't count, so the list
@@ -1338,12 +1512,18 @@
   function recordSearch() {
     const v = document.getElementById("cardInput").value.trim();
     if (!v || !window.Recents) return;
-    Recents.record(v, parseCardQuery);
+    // Each game parses its own name/number split, so a remembered One Piece
+    // query matches back the same way it was searched.
+    Recents.record(v, game === "op" ? OnePiece.parseForRecents : parseCardQuery);
   }
 
   function recentRows(cores, number, total) {
     if (!window.Recents) return [];
-    return Recents.match(cores, number, total, 6).map(it => ({
+    // Filtered to the active game: a Pokemon dropdown listing "OP01-016 aa"
+    // would offer a row that this mode cannot search correctly.
+    return Recents.match(cores, number, total, 6)
+      .filter(it => gameOf(it.q) === game)
+      .map(it => ({
       name: it.q,
       num:  "",
       set:  "",
@@ -1626,7 +1806,7 @@
     const rows = withRecents(recents, cards || []);
     // Signature covers the recents too, and still folds in the raw input when
     // the offline name list is what's being shown below them.
-    const sig = "c:" + rows.map(r => r.src + r.name + "|" + r.num + "|" + r.set).join("~")
+    const sig = "c:" + rows.map(r => r.src + r.name + "|" + r.num + "|" + r.set + "|" + (r.label || "")).join("~")
       + (cards ? "" : "|n:" + document.getElementById("cardInput").value.toLowerCase());
     if (sig === lastSuggestSig) return; // identical to what's shown — no rebuild
     lastSuggestSig = sig;
@@ -1651,7 +1831,7 @@
     const lastWord = raw.split(/\s+/).pop().toLowerCase();
     if (!lastWord) return;
     const prefix = raw.slice(0, raw.length - lastWord.length);
-    ALL_NAMES
+    (game === "op" ? opNameList() : ALL_NAMES)
       .filter(x => x.toLowerCase().startsWith(lastWord))
       .slice(0, 10)
       .forEach(item => {
@@ -1666,6 +1846,7 @@
 
   function makeCardRow(r) {
     const fill = r.fill || `${r.name} ${r.num}`;
+    const meta = [r.rarity, r.label].filter(Boolean).join(" ");
     const div = document.createElement("div");
     div.className = "card-sug" + (r.src === "recent" ? " recent-sug" : "");
     div.dataset.fill = fill;
@@ -1676,6 +1857,8 @@
         + `<span class="sug-meta"><span class="sug-src recent">↺ recent</span> ${escHtml(relTime(r.t))}</span>`
       : `<span class="sug-name">${escHtml(r.name)}</span>`
       + `<span class="sug-meta"><span class="sug-num">${escHtml(r.num)}</span>`
+      // One Piece rows carry the printing ("SR Alt Art"); Pokemon rows don't.
+      + (meta ? ` · <span class="sug-treat">${escHtml(meta)}</span>` : "")
       + (r.set ? ` · ${escHtml(r.set)}` : "")
       + (r.src === "intl" ? ` <span class="sug-src">intl</span>` : "")
       + `</span>`;
@@ -2016,7 +2199,7 @@
     const raw   = document.getElementById("priceInput").value;
     const price = cleanNum(raw);
     if (!label || raw === "") return;
-    compItems.push({ id: Money.nextId(), label, price, pct: headerPct });
+    compItems.push({ id: Money.nextId(), label, price, pct: headerPct, game });
     saveComp();
     renderComp();
     document.getElementById("priceInput").value = "";
@@ -2032,6 +2215,11 @@
     const item = compItems.find(x => x.id === id);
     if (!item) return;
     const ci = document.getElementById("cardInput");
+    // A mixed comp list is the normal case — a Pokemon slab and a One Piece alt
+    // art in the same negotiation — so re-searching a row has to put the app
+    // back into the game that row was priced in, or the query is rebuilt by the
+    // wrong parser and quietly returns the wrong card.
+    setGame(gameOf(item.label, item.game));
     ci.value = item.label;
     update();
     closeSuggestions();   // it's an exact card already — don't cover the buttons
