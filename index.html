@@ -1055,8 +1055,15 @@
     localStorage.setItem("game", g);
     applyGame();
     lastSuggestSig = "";   // the dropdown is about to mean something else
-    update();
-    document.getElementById("cardInput").focus();
+    // The box is emptied on the way across. Whatever is in it was written in
+    // the other game's language, and the two do not overlap: "Charizard
+    // 125/094" is not a One Piece card and "OP01-016 aa" parses to nothing in
+    // Pokemon, so leaving it there only produces a dead search and a dropdown
+    // with nothing in it. Worse, the halves that DO survive mean something
+    // else -- "sp" is a One Piece printing and a Pokemon set -- so a leftover
+    // query can come back looking valid while pointing at the wrong card.
+    // Switching games is starting a new search; start it from an empty box.
+    clearInput();          // clears the box, status, suggestions and lastCard
   }
 
   // A comp row, a saved set and a recent search are all just the text that was
@@ -2333,6 +2340,65 @@
     }
     clearActiveComp();
   }
+
+  // ── Idle reset ────────────────────────────────────────────
+  // This app lives on a phone on a shop counter, and a comp ends when the
+  // customer walks away rather than when anyone presses a button. So the next
+  // person's cards get typed on top of the last person's list, and the quote
+  // they are given is the two comps added together. Five minutes of nothing is
+  // the signal that the negotiation is over.
+  //
+  // The reset FILES the comp first and only then empties the screen: the set
+  // lands in Recent Comp Sets exactly as Save & Clear would have left it, so
+  // this can never lose a list — it costs one tap to reopen. That is what makes
+  // it safe to run unattended; a reset that discarded anything would not be.
+  const IDLE_MS = 5 * 60 * 1000;
+  const IDLE_TICK_MS = 30 * 1000;
+
+  // A timestamp rather than a rolling setTimeout, because the case this exists
+  // for is a phone with the screen off, where timers are throttled or frozen
+  // outright. Comparing clocks on the way back in is the only reading of "how
+  // long has this sat there" that survives that.
+  let lastActivity = Date.now();
+  function markActivity() { lastActivity = Date.now(); }
+
+  // Capture phase, so a handler that stops propagation can't make the app look
+  // idle while it is being used.
+  ["pointerdown", "keydown", "input", "change", "touchstart", "wheel"]
+    .forEach(ev => document.addEventListener(ev, markActivity, true));
+
+  // Is there anything to reset? An app that was already empty should sit there
+  // quietly rather than re-render itself every five minutes.
+  function hasWorkInProgress() {
+    if (compItems.length || tradeItems.length) return true;
+    const ci = document.getElementById("cardInput");
+    const pi = document.getElementById("priceInput");
+    return !!((ci && ci.value.trim()) || (pi && pi.value.trim()));
+  }
+
+  function idleReset() {
+    saveAndClearComp();   // files the set if there is one, then empties the editor
+    const pi = document.getElementById("priceInput");
+    if (pi) pi.value = "";
+    clearInput();         // box, status badges, suggestions, open eBay windows
+    // clearInput() focuses the box, which on a counter phone raises the
+    // keyboard at nobody. The reset is for the NEXT person, who isn't here yet.
+    if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function checkIdle() {
+    if (Date.now() - lastActivity < IDLE_MS) return;
+    lastActivity = Date.now();
+    if (hasWorkInProgress()) idleReset();
+  }
+
+  setInterval(checkIdle, IDLE_TICK_MS);
+  // The two moments worth reading the clock immediately: the app coming back to
+  // the front after being away, which is exactly the gap being measured and
+  // where a throttled interval is least likely to have fired on its own.
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) checkIdle(); });
+  window.addEventListener("focus", checkIdle);
 
   // ── Saved comp sets ──────────────────────────────────────
   // Selecting a set loads it straight into the active editor — pre-filled and
